@@ -1,21 +1,19 @@
 from web3 import Web3
 import pandas as pd
-import time
+import numpy as np
 
-# Step 1: Connect to local Ganache blockchain
-ganache_url = "http://127.0.0.1:7545"
+# 1. Connect to Ganache
+ganache_url = "HTTP://127.0.0.1:7545"
 web3 = Web3(Web3.HTTPProvider(ganache_url))
 
-# Step 2: Verify connection
-if web3.is_connected():
-    print("Connected to Ganache successfully!")
-else:
-    raise Exception("Connection failed. Ensure Ganache is running.")
+if not web3.is_connected():
+    raise Exception("⚠️ Connection to Ganache failed. Please make sure Ganache is running.")
 
-# Step 3: Set the deployed smart contract address
-contract_address = "0x782b0ED6Bc0AFAA85355e8f6109779e2d5677C90"
+print("✅ Connected to Ganache!")
 
-# Step 4: Load the ABI from your IoTDataStorage contract
+# 2. Load contract ABI and address
+contract_address = web3.to_checksum_address("0x782b0ED6Bc0AFAA85355e8f6109779e2d5677C90")
+
 abi = [
     {
         "inputs": [],
@@ -84,52 +82,41 @@ abi = [
     }
 ]
 
-
-# Step 5: Load the contract and set default account
+# 3. Load smart contract
 contract = web3.eth.contract(address=contract_address, abi=abi)
-web3.eth.default_account = web3.eth.accounts[0]
-print(f"Smart Contract loaded at: {contract_address}")
+print(f"✅ Smart contract loaded at: {contract_address}")
 
-# Step 6: Store a dummy logistics reading
-txn = contract.functions.storeData("TEST001", "Temperature", "22.5°C").transact({
-    'from': web3.eth.default_account,
-    'gas': 1000000
-})
-web3.eth.wait_for_transaction_receipt(txn)
-print("Dummy logistics data stored on blockchain.")
+# 4. Retrieve total records
+total_records = contract.functions.getTotalRecords().call()
+print(f"📦 Total IoT records stored: {total_records}")
 
-# Step 7: Check the total records
-total = contract.functions.getTotalRecords().call()
-print(f"📦 Total logistics records so far: {total}")
+# 5. Fetch all records
+data = []
+for i in range(total_records):
+    record = contract.functions.getRecord(i).call()
+    data.append({
+        "timestamp": record[0],
+        "device_id": record[1],
+        "data_type": record[2],
+        "data_value": record[3]
+    })
 
-if total > 0:
-    record = contract.functions.getRecord(0).call()
-    print("First Logistics Record:", record)
+# 6. Create DataFrame
+df = pd.DataFrame(data)
 
-# Step 8: Load logistics CSV data
-df = pd.read_csv("logistics_data.csv")  
-print("\nCSV Preview:")
+# 7. Convert UNIX timestamp to datetime
+df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
+
+# 8. Extract numeric value from 'data_value'
+df["numeric_value"] = df["data_value"].str.extract(r'(\d+\.?\d*)').astype(float)
+
+# 9. Fill missing values
+df.fillna(0, inplace=True)
+
+# 10. Preview cleaned data
+print("\n📊 Cleaned Data Preview:")
 print(df.head())
 
-# Step 9: Define a function to send logistics data to blockchain
-def send_iot_data(package_id, data_type, data_value):
-    txn = contract.functions.storeData(package_id, data_type, data_value).transact({
-        'from': web3.eth.default_account,
-        'gas': 3000000
-    })
-    receipt = web3.eth.wait_for_transaction_receipt(txn)
-    print(f"Stored: {package_id} | {data_type} = {data_value} | Txn Hash: {receipt.transactionHash.hex()}")
-
-# Step 10: Loop and send each row from CSV
-print("\n Sending logistics IoT data to blockchain...\n")
-for _, row in df.iterrows():
-    package_id = str(row["package_id"])
-    data_type = "Temperature"  # since your CSV is about temperature_c
-    data_value = str(row["temperature_c"]) + "°C"
-
-    send_iot_data(package_id, data_type, data_value)
-
-
-# Step 11: Final record confirmation
-final_total = contract.functions.getTotalRecords().call()
-print(f"\n✅ Final logistics record count: {final_total}")
+# 11. Save to CSV
+df.to_csv("cleaned_iot_data.csv", index=False)
+print("\n✅ Cleaned IoT data saved successfully as cleaned_iot_data.csv")
